@@ -18,6 +18,46 @@ typedef struct Node
     uint8_t *word;
 } Node;
 
+// int parse_args (int argc, char *argv[])
+// {
+//     int flags, opt;
+//     int nsecs, tfnd;
+
+//     nsecs = 0;
+//     tfnd = 0;
+//     flags = 0;
+//     while ((opt = getopt(argc, argv, "nt:")) != -1) 
+//     {
+//         switch (opt) 
+//         {
+//         case 'n':
+//             flags = 1;
+//             break;
+//         case 't':
+//             nsecs = atoi(optarg);
+//             tfnd = 1;
+//             break;
+//         default: /* '?' */
+//             fprintf(stderr, "Usage: %s [-t nsecs] [-n] name\n", argv[0]);
+//             exit(EXIT_FAILURE);
+//         }
+//     }
+
+//     printf("flags=%d; tfnd=%d; nsecs=%d; optind=%d\n",
+//             flags, tfnd, nsecs, optind);
+
+//     if (optind >= argc) {
+//         fprintf(stderr, "Expected argument after options\n");
+//         exit(EXIT_FAILURE);
+//     }
+
+//     printf("name argument = %s\n", argv[optind]);
+
+//     /* Other code omitted */
+
+//     exit(EXIT_SUCCESS);
+// }
+
 uint64_t nextPrime(uint64_t n)
 {
     uint64_t i;
@@ -162,10 +202,6 @@ uint8_t hash (uint64_t word_count, Node* node)
         }
     }
 
-    printf("Total Collisions: %lu\n", colls);
-    printf("Total Items: %lu\n", word_count);
-    printf("Total Space: %lu\n", table_size);
-
     k = table_size - 1;
     for (i = 0; i < table_size; i++)
     {
@@ -194,6 +230,10 @@ uint8_t hash (uint64_t word_count, Node* node)
             printf("%lu occurrences of %s\n", hm[i]->weight,hm[i]->word);
         }
     }
+
+    printf("Total Collisions: %lu\n", colls);
+    printf("Total Items: %lu\n", word_count);
+    printf("Total Space: %lu\n", table_size);
 
     goto end_success;
 
@@ -278,7 +318,7 @@ int main(int argc, char const *argv[])
             i += k - i;
         }
     }
-
+printf("before hash 3\n");
     hash(word_count, tail);
 
     goto end_success;
