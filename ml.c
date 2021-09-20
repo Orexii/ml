@@ -1,7 +1,10 @@
 #include <ctype.h>
+#include <dirent.h> 
+#include <errno.h>
 #include <fcntl.h>
 #include <math.h>
 #include <openssl/md5.h>
+#include <sodium.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -9,6 +12,12 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <unistd.h>
+
+#define MESSAGE ((const unsigned char *) "test")
+#define MESSAGE_LEN 4
+#define CIPHERTEXT_LEN (crypto_secretbox_MACBYTES + MESSAGE_LEN)
+
+// unsigned char key[crypto_secretbox_KEYBYTES];
 
 // struct Node;
 typedef struct Node
@@ -242,21 +251,13 @@ end_success:
     return retval;
 }
 
-
-int main(int argc, char const *argv[])
+uint8_t reader (uint8_t** buf, const uint8_t *path)
 {
     struct stat statbuf;
     int32_t fd = -1;
     uint8_t retval = EXIT_FAILURE;
-    uint8_t *str = NULL;
-    uint64_t i;
-    uint64_t word_count = 0;
-    uint64_t k;
-    Node *tail = NULL;
-    Node *node = NULL;
-    Node *node_last = NULL;
 
-    if (-1 == (fd = open(argv[1], O_RDONLY)))
+    if (-1 == (fd = open(path, O_RDONLY)))
     {
         printf("open failed\n");
         goto open_error;
@@ -269,22 +270,206 @@ int main(int argc, char const *argv[])
         goto fstat_error;
     }
 
-    if (NULL == (str = malloc(sizeof(uint8_t)*(statbuf.st_size + 1))))
+    if (NULL == (*buf = malloc(sizeof(uint8_t)*(statbuf.st_size + 1))))
     {
         printf("malloc failed\n");
         goto malloc_error;
     }
 
-    memset(str, 0, sizeof(uint8_t)*(statbuf.st_size + 1));
-    if (-1 == read(fd, str, statbuf.st_size))
+    memset(*buf, 0, sizeof(uint8_t)*(statbuf.st_size + 1));
+    if (-1 == read(fd, *buf, statbuf.st_size))
     {
         printf("read error\n");
         goto read_error;
     }
 
-    for (i = 0; i < statbuf.st_size; i++)
+    close(fd);
+
+    retval = EXIT_SUCCESS;
+    goto end_success;
+
+read_error:
+    free(buf);
+malloc_error:
+fstat_error:
+    close(fd);
+open_error:
+end_success:
+    return retval;
+}
+
+// TODO: make reliable
+uint8_t writer (uint8_t* buf, uint64_t buf_len, const uint8_t *path)
+{
+    int32_t fd = -1;
+    uint8_t retval = EXIT_FAILURE;
+
+    if (-1 == (fd = open(path, O_WRONLY)))
     {
-        if (0 != isalpha(str[i]))
+        printf("open failed\n");
+        goto open_error;
+    }
+
+    if (-1 == write(fd, buf, buf_len))
+    {
+        printf("write failed\n");
+        goto write_error;
+    }
+
+    close(fd);
+
+    retval = EXIT_SUCCESS;
+    goto end_success;
+
+write_error:
+    close(fd);
+open_error:
+end_success:
+    return retval;
+}
+
+uint8_t encrypt_dir (const uint8_t *path) 
+{
+    uint8_t retval = EXIT_FAILURE;
+    DIR *d;
+    struct dirent *dir;
+
+    d = opendir(path);
+    if (NULL == d) 
+    {
+        printf("opendir error\n");
+        goto opendir_error;
+    }
+
+    errno = 0;
+    while ((dir = readdir(d)) != NULL) 
+    {
+        if (0 != errno)
+        {
+            printf("readdir error\n");
+            goto readdir_error;
+        }
+        printf("%s\n", dir->d_name);
+    }
+    closedir(d);
+
+    retval = EXIT_SUCCESS;
+    goto end_success;
+
+readdir_error:
+    closedir(d);
+opendir_error:
+end_success:
+    return retval;
+}
+
+uint8_t encrypt_file (uint8_t *path, uint8_t *key)
+{
+    uint8_t retval = EXIT_FAILURE;
+    uint8_t *buf = NULL;
+    uint64_t buf_len;
+    uint8_t nonce[crypto_secretbox_NONCEBYTES];
+    uint8_t ciphertext;
+    uint64_t ciphertext_len;
+    uint8_t *encrypted_path;
+
+    if (NULL == path)
+    {
+        printf("path == NULL\n");
+        goto path_error;
+    }
+
+    if (key == NULL)
+    {
+        printf("key == NULL\n");
+        goto key_null_error;
+    }
+
+    if (crypto_secretbox_KEYBYTES != strnlen(key, crypto_secretbox_KEYBYTES))
+    {
+        printf("key != crypto_secretbox_KEYBYTES\n");
+        goto key_len_error;
+    }
+
+    if (EXIT_SUCCESS != reader(&buf, argv[1]))
+    {
+        printf("reader failed\n");
+        goto reader_error;
+    }
+
+    buf_len = strlen(buf);
+    ciphertext_len = crypto_secretbox_MACBYTES + buf_len;
+
+    if (-1 == sodium_init()) 
+    {
+        printf("sodium_init failed\n");
+        goto sodium_init_error;
+    }
+
+    ciphertext = malloc(ciphertext_len);
+    if (NULL == ciphertext)
+    {
+        printf("malloc failed\n");
+        goto malloc_error;
+    }
+
+    crypto_secretbox_keygen(key);
+    randombytes_buf(nonce, sizeof nonce);
+    crypto_secretbox_easy(ciphertext, buf, buf_len, nonce, key);
+
+    encrypted_path = malloc(strlen("ENCRYPTED_") + strnlen(path, FILENAME_MAX));
+    if (NULL == encrypted_path)
+    {
+        printf("malloc failed 2\n");
+        goto malloc_error_2;
+    }
+    writer(ciphertext, ciphertext_len, strcat())
+
+    // unsigned char decrypted[MESSAGE_LEN];
+    // if (0 != crypto_secretbox_open_easy(decrypted, ciphertext, CIPHERTEXT_LEN, nonce, key)) 
+    // {
+    //     /* message forged! */
+    // }
+
+    goto end_success;
+
+crypto_secretbox_open_easy_error:
+    free(ciphertext);
+malloc_error_2
+malloc_error:
+sodium_init_error:
+    free(buf);
+reader_error:
+key_len_error:
+key_null_error:
+path_error:
+end_success:
+    return retval;
+}
+
+int main (int argc, char const *argv[])
+{
+    uint8_t retval = EXIT_FAILURE;
+    uint8_t *buf = NULL;
+    uint64_t i;
+    uint64_t word_count = 0;
+    uint64_t k;
+    uint64_t buf_len;
+    Node *tail = NULL;
+    Node *node = NULL;
+    Node *node_last = NULL;
+
+    if (EXIT_SUCCESS != reader(&buf, argv[1]))
+    {
+        printf("reader failed\n");
+        goto reader_error;
+    }
+
+    buf_len = strlen(buf);
+
+    for (i = 0; i < buf_len; i++)
+    {
+        if (0 != isalpha(buf[i]))
         {
             word_count++;
             if (NULL == (node = malloc(sizeof(Node))))
@@ -303,7 +488,7 @@ int main(int argc, char const *argv[])
                 node_last->next = node;
             }
 
-            for (k = i; ('\0' != str[k]) && isalpha(str[k]); k++);
+            for (k = i; ('\0' != buf[k]) && isalpha(buf[k]); k++);
 
             if (NULL == (node->word = malloc(sizeof(uint8_t)*(k - i + 1))))
             {
@@ -312,7 +497,7 @@ int main(int argc, char const *argv[])
             }
             memset(node->word, 0, k - i + 1);
 
-            memcpy(node->word, str + i, k - i);
+            memcpy(node->word, buf + i, k - i);
 
             node_last = node;
             i += k - i;
@@ -321,16 +506,20 @@ int main(int argc, char const *argv[])
 printf("before hash 3\n");
     hash(word_count, tail);
 
+    if (EXIT_SUCCESS != encrypt_dir(argv[2]))
+    {
+        printf("encrypt_dir failed\n");
+        goto encrypt_dir_error;
+    }
+
     goto end_success;
 
+encrypt_dir_error:
 malloc_error_3:
     free(tail);
 malloc_error_2:
-read_error:
-    free(str);
-malloc_error:
-fstat_error:
-open_error:
+reader_error:
+    free(buf);
 end_success:
     return retval;
 }
