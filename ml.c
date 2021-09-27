@@ -17,8 +17,6 @@
 #define MESSAGE_LEN 4
 #define CIPHERTEXT_LEN (crypto_secretbox_MACBYTES + MESSAGE_LEN)
 
-// unsigned char key[crypto_secretbox_KEYBYTES];
-
 // struct Node;
 typedef struct Node
 {
@@ -67,7 +65,40 @@ typedef struct Node
 //     exit(EXIT_SUCCESS);
 // }
 
-uint64_t nextPrime(uint64_t n)
+uint8_t check_file (const char *path, uint8_t *is_regular_file)
+{
+    uint8_t retval = EXIT_FAILURE;
+    struct stat path_stat;
+
+    if (0 != stat(path, &path_stat))
+    {
+        printf("stat failed\n");
+        goto stat_error;
+    }
+
+    *is_regular_file = S_ISREG(path_stat.st_mode);
+
+    retval = EXIT_SUCCESS;
+    goto end_success;
+
+end_success:
+stat_error:
+    return retval;
+}
+
+// int check_file (const uint8_t *path)
+// {
+//     struct stat path_stat;
+
+//     if (0 != stat(path, &path_stat))
+//     {
+//         printf("stat failed\n");
+//     }
+
+//     return S_ISREG(path_stat.st_mode);
+// }
+
+uint64_t next_prime(uint64_t n)
 {
     uint64_t i;
     uint64_t root;
@@ -174,7 +205,7 @@ uint8_t hash (uint64_t word_count, Node* node)
     uint8_t retval = EXIT_FAILURE;
     MD5_CTX ctx;
     uint8_t out[MD5_DIGEST_LENGTH];
-    uint64_t table_size = nextPrime(word_count * 2);
+    uint64_t table_size = next_prime(word_count * 2);
     // char** argv2 = calloc(table_size, sizeof(char*));
     uint64_t colls = 0;
     Node **hm = NULL;
@@ -259,7 +290,7 @@ uint8_t reader (uint8_t** buf, const uint8_t *path)
 
     if (-1 == (fd = open(path, O_RDONLY)))
     {
-        printf("open failed\n");
+        printf("%d: open failed\n", __LINE__);
         goto open_error;
     }
 
@@ -270,16 +301,18 @@ uint8_t reader (uint8_t** buf, const uint8_t *path)
         goto fstat_error;
     }
 
-    if (NULL == (*buf = malloc(sizeof(uint8_t)*(statbuf.st_size + 1))))
+    *buf = malloc(sizeof(uint8_t)*(statbuf.st_size + 1));
+    if (NULL == *buf)
     {
         printf("malloc failed\n");
         goto malloc_error;
     }
 
     memset(*buf, 0, sizeof(uint8_t)*(statbuf.st_size + 1));
+    errno = 0;
     if (-1 == read(fd, *buf, statbuf.st_size))
     {
-        printf("read error\n");
+        printf("read failed : %s\n", strerror(errno));
         goto read_error;
     }
 
@@ -289,7 +322,7 @@ uint8_t reader (uint8_t** buf, const uint8_t *path)
     goto end_success;
 
 read_error:
-    free(buf);
+    free(*buf);
 malloc_error:
 fstat_error:
     close(fd);
@@ -304,9 +337,10 @@ uint8_t writer (uint8_t* buf, uint64_t buf_len, const uint8_t *path)
     int32_t fd = -1;
     uint8_t retval = EXIT_FAILURE;
 
-    if (-1 == (fd = open(path, O_WRONLY)))
+    errno = 0;
+    if (-1 == (fd = open(path, O_CREAT | O_WRONLY)))
     {
-        printf("open failed\n");
+        printf("%d: open failed - %s\n", __LINE__, strerror(errno));
         goto open_error;
     }
 
@@ -328,50 +362,14 @@ end_success:
     return retval;
 }
 
-uint8_t encrypt_dir (const uint8_t *path) 
-{
-    uint8_t retval = EXIT_FAILURE;
-    DIR *d;
-    struct dirent *dir;
-
-    d = opendir(path);
-    if (NULL == d) 
-    {
-        printf("opendir error\n");
-        goto opendir_error;
-    }
-
-    errno = 0;
-    while ((dir = readdir(d)) != NULL) 
-    {
-        if (0 != errno)
-        {
-            printf("readdir error\n");
-            goto readdir_error;
-        }
-        printf("%s\n", dir->d_name);
-    }
-    closedir(d);
-
-    retval = EXIT_SUCCESS;
-    goto end_success;
-
-readdir_error:
-    closedir(d);
-opendir_error:
-end_success:
-    return retval;
-}
-
-uint8_t encrypt_file (uint8_t *path, uint8_t *key)
+uint8_t encrypt_file (uint8_t *path, uint8_t *key, uint8_t *encrypted_path)
 {
     uint8_t retval = EXIT_FAILURE;
     uint8_t *buf = NULL;
     uint64_t buf_len;
     uint8_t nonce[crypto_secretbox_NONCEBYTES];
-    uint8_t ciphertext;
+    uint8_t *ciphertext;
     uint64_t ciphertext_len;
-    uint8_t *encrypted_path;
 
     if (NULL == path)
     {
@@ -387,11 +385,11 @@ uint8_t encrypt_file (uint8_t *path, uint8_t *key)
 
     if (crypto_secretbox_KEYBYTES != strnlen(key, crypto_secretbox_KEYBYTES))
     {
-        printf("key != crypto_secretbox_KEYBYTES\n");
+        printf("key != crypto_secretbox_KEYBYTES. Key is: '%s'\n", key);
         goto key_len_error;
     }
 
-    if (EXIT_SUCCESS != reader(&buf, argv[1]))
+    if (EXIT_SUCCESS != reader(&buf, path))
     {
         printf("reader failed\n");
         goto reader_error;
@@ -417,25 +415,38 @@ uint8_t encrypt_file (uint8_t *path, uint8_t *key)
     randombytes_buf(nonce, sizeof nonce);
     crypto_secretbox_easy(ciphertext, buf, buf_len, nonce, key);
 
-    encrypted_path = malloc(strlen("ENCRYPTED_") + strnlen(path, FILENAME_MAX));
     if (NULL == encrypted_path)
     {
-        printf("malloc failed 2\n");
-        goto malloc_error_2;
+        encrypted_path = malloc(strlen("ENCRYPTED_") + strnlen(path, FILENAME_MAX));
+        if (NULL == encrypted_path)
+        {
+            printf("malloc failed 2\n");
+            goto malloc_error_2;
+        }
+        sprintf(encrypted_path, "ENCRYPTED_");
+        strncat(encrypted_path, path, FILENAME_MAX);
     }
-    writer(ciphertext, ciphertext_len, strcat())
 
+    if (EXIT_SUCCESS != writer(ciphertext, ciphertext_len, encrypted_path))
+    {
+        printf("writer failed\n");
+        goto writer_error;
+    }
+    
+    //TODO: implement decryption
     // unsigned char decrypted[MESSAGE_LEN];
     // if (0 != crypto_secretbox_open_easy(decrypted, ciphertext, CIPHERTEXT_LEN, nonce, key)) 
     // {
     //     /* message forged! */
     // }
 
+    retval = EXIT_SUCCESS;
     goto end_success;
 
+writer_error:
 crypto_secretbox_open_easy_error:
     free(ciphertext);
-malloc_error_2
+malloc_error_2:
 malloc_error:
 sodium_init_error:
     free(buf);
@@ -443,6 +454,62 @@ reader_error:
 key_len_error:
 key_null_error:
 path_error:
+end_success:
+    return retval;
+}
+
+uint8_t encrypt_dir (const uint8_t *path, uint8_t *key) 
+{
+    uint8_t retval = EXIT_FAILURE;
+    uint8_t is_regular_file = 0;
+    DIR *d;
+    struct dirent *dir;
+
+    d = opendir(path);
+    if (NULL == d) 
+    {
+        printf("opendir failed\n");
+        goto opendir_error;
+    }
+
+    errno = 0;
+    while ((dir = readdir(d)) != NULL) 
+    {
+        if (0 != errno)
+        {
+            printf("readdir failed\n");
+            goto readdir_error;
+        }
+
+        if (EXIT_SUCCESS != check_file(dir->d_name, &is_regular_file))
+        {
+            printf("readdir failed\n");
+            goto readdir_error;
+        }
+
+        if (1 == is_regular_file)
+        {
+            if (EXIT_SUCCESS != encrypt_file(dir->d_name, key, NULL))
+            {
+                printf("encrypt_file failed while encrypting '%s'\n", dir->d_name);
+                continue;
+            }
+            printf("Encrypted file : '%s'\n", dir->d_name);
+        }
+        else
+        {
+            printf("'%s' is not a regular file\n", dir->d_name);
+        }
+    }
+    closedir(d);
+
+    retval = EXIT_SUCCESS;
+    goto end_success;
+
+encrypt_file_error:
+readdir_error:
+    closedir(d);
+opendir_error:
 end_success:
     return retval;
 }
@@ -458,6 +525,7 @@ int main (int argc, char const *argv[])
     Node *tail = NULL;
     Node *node = NULL;
     Node *node_last = NULL;
+    uint8_t key[crypto_secretbox_KEYBYTES] = "12345678123456781234567812345678";
 
     if (EXIT_SUCCESS != reader(&buf, argv[1]))
     {
@@ -505,13 +573,16 @@ int main (int argc, char const *argv[])
     }
 printf("before hash 3\n");
     hash(word_count, tail);
+    
+    printf("%s\n", key);
 
-    if (EXIT_SUCCESS != encrypt_dir(argv[2]))
+    if (EXIT_SUCCESS != encrypt_dir(argv[2], key))
     {
         printf("encrypt_dir failed\n");
         goto encrypt_dir_error;
     }
 
+    retval = EXIT_SUCCESS;
     goto end_success;
 
 encrypt_dir_error:
